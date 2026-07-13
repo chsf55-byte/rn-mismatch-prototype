@@ -1,3 +1,5 @@
+# PRD: GRN Mismatch Review & Resolution
+---
 ## 1. Problem
 
 When a delivery arrives, an operator logs a GRN capturing what was actually received — quantities and prices — against the PO's confirmed values. Supy already computes the variance between confirmed and received. **What it doesn't do is let anyone act on that variance inside the platform.**
