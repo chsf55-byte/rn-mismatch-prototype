@@ -454,7 +454,7 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.4" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.6v1.6M8 12.8v1.6M14.4 8h-1.6M3.2 8H1.6M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1M12.5 12.5l-1.1-1.1M4.6 4.6l-1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         </button>
         <div class="popover" id="tolPop">
-          <h4>Mismatch tolerance</h4>
+          <h4>Tolerance & severity</h4>
           <p class="sub">Applies to lines not yet reviewed. Resolved or escalated lines keep their history.</p>
           <div class="tolerow">
             <label>Quantity variance</label>
@@ -463,6 +463,14 @@
           <div class="tolerow">
             <label>Price variance</label>
             <div class="inputwrap"><input type="number" id="tolPrice" step="0.5" min="0"> <span>%</span></div>
+          </div>
+          <div class="tolerow" style="border-top:1px solid var(--border); padding-top:10px; margin-top:2px;">
+            <label>Critical if $ impact ≥</label>
+            <div class="inputwrap"><span>$</span><input type="number" id="sevCritical" step="5" min="0"></div>
+          </div>
+          <div class="tolerow">
+            <label>Medium if $ impact ≥</label>
+            <div class="inputwrap"><span>$</span><input type="number" id="sevMedium" step="5" min="0"></div>
           </div>
           <button class="btn btn-primary btn-sm" id="tolApply" style="width:100%; justify-content:center;">Apply</button>
         </div>
@@ -488,6 +496,7 @@
     queueSearch: '',
     screen: { name: 'queue' },
     tolerance: { qty: 2, price: 1 },
+    severityThresholds: { critical: 50, medium: 15 },
     operatorUser: 'Downtown Branch Operator'
   };
 
@@ -601,9 +610,10 @@
 
   // ---------- Severity ----------
   // Placeholder thresholds — tuned per customer once real $ distributions are known, same as tolerance.
+  // Live-adjustable via the settings popover, same as tolerance.
   function severityTier(absDollar){
-    if (absDollar >= 50) return 'critical';
-    if (absDollar >= 15) return 'medium';
+    if (absDollar >= state.severityThresholds.critical) return 'critical';
+    if (absDollar >= state.severityThresholds.medium) return 'medium';
     return 'small';
   }
   var SEV_RANK = { critical: 3, medium: 2, small: 1 };
@@ -1064,6 +1074,8 @@
     notifPop.classList.remove('show');
     document.getElementById('tolQty').value = state.tolerance.qty;
     document.getElementById('tolPrice').value = state.tolerance.price;
+    document.getElementById('sevCritical').value = state.severityThresholds.critical;
+    document.getElementById('sevMedium').value = state.severityThresholds.medium;
     tolPop.classList.toggle('show');
   });
 
@@ -1089,11 +1101,15 @@
   document.getElementById('tolApply').addEventListener('click', function(){
     var q = parseFloat(document.getElementById('tolQty').value);
     var p = parseFloat(document.getElementById('tolPrice').value);
+    var sc = parseFloat(document.getElementById('sevCritical').value);
+    var sm = parseFloat(document.getElementById('sevMedium').value);
     if (!isNaN(q)) state.tolerance.qty = q;
     if (!isNaN(p)) state.tolerance.price = p;
+    if (!isNaN(sc)) state.severityThresholds.critical = sc;
+    if (!isNaN(sm)) state.severityThresholds.medium = sm;
     tolPop.classList.remove('show');
     render();
-    showToast('Tolerance updated — open items re-evaluated');
+    showToast('Tolerance & severity updated');
   });
 
   // ---------- Event delegation ----------
