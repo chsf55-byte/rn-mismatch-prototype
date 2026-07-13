@@ -500,9 +500,12 @@
     operatorUser: 'Downtown Branch Operator'
   };
 
-  function mkLine(id, item, cq, cp, rq, rp, opNote, resolution){
+  // Escalation is stored separately from the resolution: an escalated line can
+  // still be resolved later, and the escalation entry must survive in the audit
+  // trail rather than be overwritten by the final decision (PRD section 6.7).
+  function mkLine(id, item, cq, cp, rq, rp, opNote, resolution, escalation){
     return { id: id, item: item, confirmedQty: cq, confirmedPrice: cp, receivedQty: rq, receivedPrice: rp,
-      opNote: opNote || '', resolution: resolution || null };
+      opNote: opNote || '', resolution: resolution || null, escalation: escalation || null };
   }
 
   var grns = [
@@ -520,7 +523,8 @@
       lines: [
         mkLine('l1', 'Tomatoes, vine', 50, 2.00, 42, 2.00, 'Driver said the rest is coming with tomorrow\'s run.'),
         mkLine('l2', 'Onions, yellow', 30, 1.20, 30, 1.35, 'Invoice price looked different from the PO, flagging just in case.'),
-        mkLine('l3', 'Lettuce, iceberg', 20, 1.50, 20, 1.50, '')
+        mkLine('l3', 'Lettuce, iceberg', 20, 1.50, 20, 1.50, ''),
+        mkLine('l4', 'Bell peppers, red', 25, 3.00, 28, 3.40, 'Came with an extra box and the docket price looks higher than the PO — flagging both.')
       ]
     },
     {
@@ -529,9 +533,9 @@
       lines: [
         mkLine('l1', 'Chicken breast', 100, 6.00, 100, 6.00, ''),
         mkLine('l2', 'Beef mince', 60, 8.50, 54, 8.50, 'Driver confirmed a short-load, said remainder isn\'t guaranteed for next batch.',
-          { type: 'settle_received', actor: 'Procurement Lead', ts: '2026-07-09 11:20', note: 'Real shortfall, not a rounding issue. Settling at what was received rather than chasing redelivery for 6kg.', settledQty: 54, settledTotal: 459.00 }),
+          { type: 'settle_received', actor: 'Procurement Lead', ts: '2026-07-09 11:20', note: 'Real shortfall, not a rounding issue. Settling at what was received rather than chasing redelivery for 6kg.', settledQty: 54, settledTotal: 459.00, sev: 'critical' }),
         mkLine('l4', 'Fresh herbs bundle', 5, 3.00, 4.8, 3.00, 'Slight trim loss, herbs are always a bit inconsistent by weight.',
-          { type: 'settle_received', actor: 'Procurement Lead', ts: '2026-07-09 11:26', note: 'Within normal spoilage/trim variance for fresh herbs — not worth chasing for $0.60.', settledQty: 4.8, settledTotal: 14.40 })
+          { type: 'settle_received', actor: 'Procurement Lead', ts: '2026-07-09 11:26', note: 'Within normal spoilage/trim variance for fresh herbs — not worth chasing for $0.60.', settledQty: 4.8, settledTotal: 14.40, sev: 'small' })
       ]
     },
     {
@@ -539,7 +543,8 @@
       date: '2026-07-05', receivedBy: 'Downtown Branch Operator',
       lines: [
         mkLine('l1', 'Flour, 25kg bag', 20, 18.00, 20, 19.50, 'Supplier rep mentioned a fuel surcharge when dropping off.',
-          { type: 'escalate', actor: 'Procurement Lead', ts: '2026-07-06 09:40', note: 'Need to check whether our contract has a surcharge clause before agreeing to this. Passing to the Accounts Manager to review the contract terms.', to: 'Accounts Manager' })
+          null,
+          { actor: 'Procurement Lead', ts: '2026-07-06 09:40', note: 'Need to check whether our contract has a surcharge clause before agreeing to this. Passing to the Accounts Manager to review the contract terms.', to: 'Accounts Manager', sev: 'medium' })
       ]
     },
     {
@@ -555,7 +560,7 @@
       lines: [
         mkLine('l1', 'Potatoes, russet', 100, 0.90, 99, 0.90, ''),
         mkLine('l2', 'Carrots', 40, 1.10, 40, 1.25, 'Supplier said prices went up this week, wasn\'t sure if it was agreed.',
-          { type: 'debit_credit', direction: 'credit', actor: 'Procurement Lead', ts: '2026-06-26 14:05', note: 'Called supplier — agreed to split the difference rather than pay the full increase. Credited $4 instead of the full $6 variance.', amount: 4.00, ref: 'CN-3382' })
+          { type: 'debit_credit', direction: 'credit', actor: 'Procurement Lead', ts: '2026-06-26 14:05', note: 'Called supplier — agreed to split the difference rather than pay the full increase. Credited $4 instead of the full $6 variance.', amount: 4.00, ref: 'CN-3382', sev: 'small' })
       ]
     },
     {
@@ -563,7 +568,7 @@
       date: '2026-06-20', receivedBy: 'Downtown Branch Operator',
       lines: [
         mkLine('l1', 'Yogurt cups, 150g', 100, 0.80, 100, 0.95, 'Cashier-facing invoice showed a higher rate than what we normally pay.',
-          { type: 'debit_credit', direction: 'credit', actor: 'Procurement Lead', ts: '2026-06-21 10:12', note: 'Supplier confirmed their system had a stale price — agreed rate on file, credited the difference.', amount: 10.00, ref: 'CN-3105' })
+          { type: 'debit_credit', direction: 'credit', actor: 'Procurement Lead', ts: '2026-06-21 10:12', note: 'Supplier confirmed their system had a stale price — agreed rate on file, credited the difference.', amount: 10.00, ref: 'CN-3105', sev: 'medium' })
       ]
     }
   ];
@@ -578,7 +583,8 @@
   }
 
   function lineStatus(l){
-    if (l.resolution) return l.resolution.type === 'escalate' ? 'escalated' : 'resolved';
+    if (l.resolution) return 'resolved';
+    if (l.escalation) return 'escalated';
     return isWithinTolerance(l) ? 'none' : 'open';
   }
 
@@ -615,7 +621,14 @@
     return 'small';
   }
   var SEV_RANK = { critical: 3, medium: 2, small: 1 };
-  function lineSeverity(l){ return severityTier(Math.abs(dollarImpact(l))); }
+  // Derived from current thresholds while a line is open; snapshotted onto the
+  // resolution/escalation record when the line closes, so threshold changes
+  // never rewrite the tier a decision was made under (PRD section 6.1).
+  function lineSeverity(l){
+    if (l.resolution && l.resolution.sev) return l.resolution.sev;
+    if (l.escalation && l.escalation.sev) return l.escalation.sev;
+    return severityTier(Math.abs(dollarImpact(l)));
+  }
   function grnExposure(g){
     return grnFlaggedLines(g).reduce(function(sum, l){ return sum + Math.abs(dollarImpact(l)); }, 0);
   }
@@ -625,19 +638,22 @@
 
   // ---------- Resolution actions ----------
   // Which actions make sense depends on what actually varied: a pure quantity
-  // difference has an arithmetic answer (no typed-in number needed); a price
-  // difference is a real negotiation and stays manual. Over-delivery is the
-  // only case with two valid "keep vs. return" outcomes.
+  // difference has an arithmetic answer (no typed-in number needed); anything
+  // involving price is a real negotiation and stays manual. When BOTH qty and
+  // price are off, only the debit/credit note is offered — its amount covers
+  // the line's full impact, so a locked arithmetic total never has to absorb
+  // a price judgment (PRD section 5, edge cases). Pure-quantity over-delivery
+  // is the only case with two valid "keep vs. return" outcomes.
   function hasQtyDelta(l){ return l.receivedQty !== l.confirmedQty; }
   function hasPriceDelta(l){ return l.receivedPrice !== l.confirmedPrice; }
   function isOverage(l){ return l.receivedQty > l.confirmedQty; }
 
   function availableActions(l){
     var actions = [];
-    if (hasQtyDelta(l)) actions.push('settle_received');
-    if (isOverage(l)) actions.push('return_surplus');
+    if (hasQtyDelta(l) && !hasPriceDelta(l)) actions.push('settle_received');
+    if (isOverage(l) && !hasPriceDelta(l)) actions.push('return_surplus');
     if (hasPriceDelta(l)) actions.push('debit_credit');
-    actions.push('escalate');
+    if (!l.escalation) actions.push('escalate');
     return actions;
   }
 
@@ -649,7 +665,6 @@
     if (res.type === 'settle_received') return 'Settled at received quantity';
     if (res.type === 'return_surplus') return 'Surplus returned';
     if (res.type === 'debit_credit') return res.direction === 'credit' ? 'Credit note recorded' : 'Debit note recorded';
-    if (res.type === 'escalate') return 'Escalated';
     return res.type;
   }
 
@@ -738,18 +753,20 @@
         return {
           grnId: g.id, readOnly: false,
           title: g.id + ' · ' + g.supplier,
-          sub: openCount + ' line' + (openCount > 1 ? 's' : '') + ' · ' + sevLabel(grnSeverity(g)) + ' · ' + daysAgo(g.date) + 'd ago'
+          sub: openCount + ' line' + (openCount > 1 ? 's' : '') + ' · ' + sevLabel(grnSeverity(g)) + ' · ' + fmtMoney(grnExposure(g)) + ' · ' + daysAgo(g.date) + 'd ago'
         };
       });
-      badge.textContent = openGrns.length;
-      badge.style.display = openGrns.length ? 'flex' : 'none';
+      // Same count as the sidebar badge — one number for "lines needing review".
+      var openLineCount = computeStats().openLines;
+      badge.textContent = openLineCount;
+      badge.style.display = openLineCount ? 'flex' : 'none';
     } else {
       title.textContent = 'Recently decided';
       sub.textContent = 'What Procurement resolved on your deliveries.';
       var mineResolved = [];
       grns.filter(function(g){ return g.receivedBy === state.operatorUser; }).forEach(function(g){
         g.lines.forEach(function(l){
-          if (l.resolution && l.resolution.type !== 'escalate' && daysAgo(l.resolution.ts.split(' ')[0]) <= 30) {
+          if (l.resolution && daysAgo(l.resolution.ts.split(' ')[0]) <= 30) {
             mineResolved.push({ g: g, l: l });
           }
         });
@@ -815,7 +832,7 @@
     html += '</div>';
 
     html += '<div class="tablewrap"><div class="scrollx"><table class="grid"><thead><tr>' +
-      '<th>GRN</th><th>Supplier / Branch</th><th>Delivery date</th><th>Lines flagged</th><th>Severity</th><th class="td-amount">$ variance</th><th>Age</th><th>Status</th>' +
+      '<th>GRN</th><th>Supplier / Branch</th><th>Delivery date</th><th>Lines flagged</th><th>Severity</th><th class="td-amount">$ exposure</th><th>Age</th><th>Status</th>' +
       '</tr></thead><tbody>';
 
     if (rows.length === 0) {
@@ -823,7 +840,9 @@
     } else {
       rows.forEach(function(g){
         var flagged = grnFlaggedLines(g);
-        var dollarTotal = flagged.reduce(function(sum,l){ return sum + dollarImpact(l); }, 0);
+        // Sum of ABSOLUTE line impacts — signed variances are never netted, so
+        // offsetting lines can't hide each other (PRD section 6.3).
+        var exposure = grnExposure(g);
         var age = daysAgo(g.date);
         var st = grnStatus(g);
         html += '<tr class="rowlink" data-open-grn="' + g.id + '">' +
@@ -832,7 +851,7 @@
           '<td class="num">' + g.date + '</td>' +
           '<td>' + flagged.length + ' of ' + g.lines.length + '</td>' +
           '<td>' + sevTag(grnSeverity(g)) + '</td>' +
-          '<td class="td-amount num ' + (dollarTotal < 0 ? 'amount-neg' : dollarTotal > 0 ? 'amount-pos' : '') + '">' + (dollarTotal === 0 ? '—' : fmtMoney(dollarTotal)) + '</td>' +
+          '<td class="td-amount num">' + (exposure === 0 ? '—' : fmtMoney(exposure)) + '</td>' +
           '<td><span class="age-tag ' + (age > 7 && st !== 'resolved' ? 'aged' : '') + '">' + (st === 'resolved' ? '—' : age + 'd') + '</span></td>' +
           '<td>' + chipHtml(st) + '</td>' +
           '</tr>';
@@ -883,7 +902,7 @@
 
     if (readOnly) {
       if (st === 'open') html += banner('b-open', openCount + ' item' + (openCount>1?'s':'') + ' flagged for review', 'Procurement has been notified and will decide how to resolve this. You don’t need to do anything further.');
-      else if (st === 'escalated') html += banner('b-escalated', 'Escalated for a second opinion', 'Procurement passed this to the ' + (flagged.find(function(l){return l.resolution && l.resolution.type==='escalate';}).resolution.to) + ' before deciding.');
+      else if (st === 'escalated') html += banner('b-escalated', 'Escalated for a second opinion', 'Procurement passed this to the ' + (flagged.find(function(l){return l.escalation;}).escalation.to) + ' before deciding.');
       else if (st === 'resolved') html += banner('b-resolved', 'All flagged items resolved', 'You were notified when each one was decided — see below for what was resolved and why.');
     } else {
       if (st === 'open') html += banner('b-open', openCount + ' line' + (openCount>1?'s':'') + ' need' + (openCount>1?'':'s') + ' a decision', 'Review the comparison below and choose how each should be resolved.');
@@ -900,16 +919,21 @@
       html += lineCompareBlock(l);
       if (l.opNote) html += '<div class="op-note"><span class="k">Operator note:</span> ' + escapeHtml(l.opNote) + '</div>';
 
+      if (l.escalation) {
+        var esc = l.escalation;
+        html += '<div class="resolution-summary"><span class="rlabel">Escalated to the ' + esc.to +
+          ':</span><span class="rnote">' + escapeHtml(esc.note) + ' — ' + esc.actor + ', ' + esc.ts + '</span></div>';
+      }
       if (l.resolution) {
         var r = l.resolution;
         var rdetail = '';
         if (r.type === 'settle_received') rdetail = ' — now ' + fmtQty(r.settledQty) + ' @ ' + fmtMoney(l.confirmedPrice) + ' = ' + fmtMoney(r.settledTotal);
         else if (r.type === 'return_surplus') rdetail = ' — settled at confirmed ' + fmtQty(r.settledQty) + ' @ ' + fmtMoney(l.confirmedPrice) + ' = ' + fmtMoney(r.settledTotal);
         else if (r.type === 'debit_credit') rdetail = ' — ' + fmtMoney(r.amount) + (r.ref ? ' (' + r.ref + ')' : ' (reference pending)');
-        else if (r.type === 'escalate') rdetail = ' to the ' + r.to;
         html += '<div class="resolution-summary"><span class="rlabel">' + resolutionLabel(r) + rdetail +
           ':</span><span class="rnote">' + escapeHtml(r.note) + ' — ' + r.actor + ', ' + r.ts + '</span></div>';
-      } else if (lst === 'open' && !readOnly) {
+      } else if ((lst === 'open' || lst === 'escalated') && !readOnly) {
+        // Escalated lines stay actionable: Open → Escalated → Resolved (PRD 6.7).
         html += '<div class="line-actions"><button class="btn btn-primary btn-sm" data-resolve="' + g.id + '|' + l.id + '">Resolve this line</button></div>';
       } else if (lst === 'open' && readOnly) {
         html += '<div class="resolution-summary"><span class="rnote">Awaiting review from Procurement.</span></div>';
@@ -941,12 +965,17 @@
   function buildActivityLog(g){
     var entries = [];
     g.lines.forEach(function(l){
+      // Escalation and resolution are separate audit entries — resolving an
+      // escalated line must not erase the record of the escalation.
+      if (l.escalation) {
+        var esc = l.escalation;
+        entries.push({ head: l.item + ' — Escalated → ' + esc.to, actor: esc.actor, ts: esc.ts, note: esc.note, sortTs: esc.ts });
+      }
       if (l.resolution) {
         var r = l.resolution;
         var head = l.item + ' — ' + resolutionLabel(r);
         if (r.type === 'settle_received' || r.type === 'return_surplus') head += ' (' + fmtMoney(r.settledTotal) + ')';
         if (r.type === 'debit_credit') head += ' (' + fmtMoney(r.amount) + ')';
-        if (r.type === 'escalate') head += ' → ' + r.to;
         entries.push({ head: head, actor: r.actor, ts: r.ts, note: r.note, sortTs: r.ts });
       }
     });
@@ -1022,7 +1051,7 @@
       '</div>';
 
     html += '<div id="drawerFields"></div>';
-    html += '</div><div class="drawer-foot"><button class="btn btn-ghost" data-cancel="1">Cancel</button><button class="btn btn-primary" id="submitResolution">Record resolution</button></div>';
+    html += '</div><div class="drawer-foot"><button class="btn btn-ghost" data-cancel="1">Cancel</button><button class="btn btn-primary" id="submitResolution">' + (drawerAction === 'escalate' ? 'Escalate' : 'Record resolution') + '</button></div>';
     drawer.innerHTML = html;
     renderDrawerFields(l);
   }
@@ -1076,22 +1105,29 @@
     var ts = '2026-07-13 ' + (9 + Math.floor(Math.random()*8)) + ':' + (Math.random()<0.5?'15':'40');
     var actor = 'Procurement Lead';
 
+    // Snapshot the tier the decision is being made under (PRD section 6.1).
+    // lineSeverity() already prefers an earlier escalation snapshot if one exists.
+    var sev = lineSeverity(l);
+
     if (drawerAction === 'settle_received') {
-      l.resolution = { type: 'settle_received', actor: actor, ts: ts, note: note, settledQty: l.receivedQty, settledTotal: l.receivedQty * l.confirmedPrice };
+      l.resolution = { type: 'settle_received', actor: actor, ts: ts, note: note, settledQty: l.receivedQty, settledTotal: l.receivedQty * l.confirmedPrice, sev: sev };
     } else if (drawerAction === 'return_surplus') {
-      l.resolution = { type: 'return_surplus', actor: actor, ts: ts, note: note, settledQty: l.confirmedQty, settledTotal: l.confirmedQty * l.confirmedPrice };
+      l.resolution = { type: 'return_surplus', actor: actor, ts: ts, note: note, settledQty: l.confirmedQty, settledTotal: l.confirmedQty * l.confirmedPrice, sev: sev };
     } else if (drawerAction === 'debit_credit') {
       var amount = parseFloat(document.getElementById('fAmount').value) || 0;
       var ref = document.getElementById('fRef').value || '';
       var direction = dollarImpact(l) >= 0 ? 'credit' : 'debit';
-      l.resolution = { type: 'debit_credit', direction: direction, actor: actor, ts: ts, note: note, amount: amount, ref: ref };
+      l.resolution = { type: 'debit_credit', direction: direction, actor: actor, ts: ts, note: note, amount: amount, ref: ref, sev: sev };
     } else if (drawerAction === 'escalate') {
-      l.resolution = { type: 'escalate', actor: actor, ts: ts, note: note, to: 'Accounts Manager' };
+      // Escalation is not a resolution — the line stays actionable and the
+      // escalation entry survives in the audit trail once it's resolved.
+      l.escalation = { actor: actor, ts: ts, note: note, to: 'Accounts Manager', sev: sev };
     }
 
+    var toastMsg = drawerAction === 'escalate' ? 'Escalated ' + l.item + ' to the Accounts Manager' : 'Resolution recorded on ' + l.item;
     closeDrawer();
     render();
-    showToast('Resolution recorded on ' + l.item);
+    showToast(toastMsg);
   }
 
   var toastTimer;
