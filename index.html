@@ -190,7 +190,6 @@
     padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; cursor: pointer;
   }
   .chip-filter.active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
-  :root[data-theme="dark"] .chip-filter.active, body:not([data-force]) .chip-filter.active {}
   .searchbox {
     margin-left: auto; display: flex; align-items: center; gap: 6px;
     border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 10px;
@@ -500,9 +499,8 @@
     operatorUser: 'Downtown Branch Operator'
   };
 
-  // Escalation is stored separately from the resolution: an escalated line can
-  // still be resolved later, and the escalation entry must survive in the audit
-  // trail rather than be overwritten by the final decision (PRD section 6.7).
+  // Escalation is stored separately from resolution so an escalated line can
+  // still be resolved and the escalation survives in the audit trail (PRD 6.7).
   function mkLine(id, item, cq, cp, rq, rp, opNote, resolution, escalation){
     return { id: id, item: item, confirmedQty: cq, confirmedPrice: cp, receivedQty: rq, receivedPrice: rp,
       opNote: opNote || '', resolution: resolution || null, escalation: escalation || null };
@@ -613,17 +611,13 @@
   }
 
   // ---------- Severity ----------
-  // Placeholder thresholds — tuned per customer once real $ distributions are known, same as tolerance.
-  // Live-adjustable via the settings popover, same as tolerance.
   function severityTier(absDollar){
     if (absDollar >= state.severityThresholds.critical) return 'critical';
     if (absDollar >= state.severityThresholds.medium) return 'medium';
     return 'small';
   }
   var SEV_RANK = { critical: 3, medium: 2, small: 1 };
-  // Derived from current thresholds while a line is open; snapshotted onto the
-  // resolution/escalation record when the line closes, so threshold changes
-  // never rewrite the tier a decision was made under (PRD section 6.1).
+  // Derived while open; snapshotted on the record when the line closes (PRD 6.1).
   function lineSeverity(l){
     if (l.resolution && l.resolution.sev) return l.resolution.sev;
     if (l.escalation && l.escalation.sev) return l.escalation.sev;
@@ -637,13 +631,8 @@
   function sevTag(tier){ return '<span class="sev sev-' + tier + '">' + sevLabel(tier) + '</span>'; }
 
   // ---------- Resolution actions ----------
-  // Which actions make sense depends on what actually varied: a pure quantity
-  // difference has an arithmetic answer (no typed-in number needed); anything
-  // involving price is a real negotiation and stays manual. When BOTH qty and
-  // price are off, only the debit/credit note is offered — its amount covers
-  // the line's full impact, so a locked arithmetic total never has to absorb
-  // a price judgment (PRD section 5, edge cases). Pure-quantity over-delivery
-  // is the only case with two valid "keep vs. return" outcomes.
+  // Auto-settle actions only when price matches confirmed; when both qty and
+  // price are off, the debit/credit note covers the full impact (PRD section 5).
   function hasQtyDelta(l){ return l.receivedQty !== l.confirmedQty; }
   function hasPriceDelta(l){ return l.receivedPrice !== l.confirmedPrice; }
   function isOverage(l){ return l.receivedQty > l.confirmedQty; }
@@ -668,10 +657,8 @@
     return res.type;
   }
 
-  // ---------- Recovered value (the $ this feature actually saved) ----------
-  // Only counts genuine negotiated wins — a credit note. Settling at received
-  // or confirmed quantity is just correct arithmetic, not a recovered dollar,
-  // and a debit note is money going out, not back — neither belongs here.
+  // ---------- Recovered value ----------
+  // Credit notes only — settles are arithmetic, debit notes are money out (PRD 8).
   function recoveredValue(l){
     if (!l.resolution) return 0;
     if (l.resolution.type === 'debit_credit' && l.resolution.direction === 'credit') return l.resolution.amount;
@@ -731,7 +718,6 @@
   }
 
   // ---------- Notifications bell ----------
-  // Reviewer: everything currently waiting on a decision. Operator: what's happened lately to deliveries they raised.
   function renderBell(){
     var title = document.getElementById('notifTitle');
     var sub = document.getElementById('notifSub');
@@ -756,7 +742,6 @@
           sub: openCount + ' line' + (openCount > 1 ? 's' : '') + ' · ' + sevLabel(grnSeverity(g)) + ' · ' + fmtMoney(grnExposure(g)) + ' · ' + daysAgo(g.date) + 'd ago'
         };
       });
-      // Same count as the sidebar badge — one number for "lines needing review".
       var openLineCount = computeStats().openLines;
       badge.textContent = openLineCount;
       badge.style.display = openLineCount ? 'flex' : 'none';
@@ -805,7 +790,7 @@
       var q = state.queueSearch.trim().toLowerCase();
       rows = rows.filter(function(g){ return (g.supplier + ' ' + g.branch + ' ' + g.id).toLowerCase().indexOf(q) > -1; });
     }
-    // Default sort: worst severity first, then oldest first within a tier — biggest, longest-waiting problems surface automatically.
+    // Worst severity first, then oldest first within a tier.
     rows.sort(function(a,b){
       var rankDiff = SEV_RANK[grnSeverity(b)] - SEV_RANK[grnSeverity(a)];
       if (rankDiff !== 0) return rankDiff;
@@ -840,8 +825,7 @@
     } else {
       rows.forEach(function(g){
         var flagged = grnFlaggedLines(g);
-        // Sum of ABSOLUTE line impacts — signed variances are never netted, so
-        // offsetting lines can't hide each other (PRD section 6.3).
+        // Absolute sum — signed variances are never netted (PRD 6.3).
         var exposure = grnExposure(g);
         var age = daysAgo(g.date);
         var st = grnStatus(g);
@@ -965,8 +949,7 @@
   function buildActivityLog(g){
     var entries = [];
     g.lines.forEach(function(l){
-      // Escalation and resolution are separate audit entries — resolving an
-      // escalated line must not erase the record of the escalation.
+      // Escalation and resolution are separate audit entries.
       if (l.escalation) {
         var esc = l.escalation;
         entries.push({ head: l.item + ' — Escalated → ' + esc.to, actor: esc.actor, ts: esc.ts, note: esc.note, sortTs: esc.ts });
@@ -1105,8 +1088,7 @@
     var ts = '2026-07-13 ' + (9 + Math.floor(Math.random()*8)) + ':' + (Math.random()<0.5?'15':'40');
     var actor = 'Procurement Lead';
 
-    // Snapshot the tier the decision is being made under (PRD section 6.1).
-    // lineSeverity() already prefers an earlier escalation snapshot if one exists.
+    // Snapshot the tier the decision is being made under (PRD 6.1).
     var sev = lineSeverity(l);
 
     if (drawerAction === 'settle_received') {
@@ -1119,8 +1101,7 @@
       var direction = dollarImpact(l) >= 0 ? 'credit' : 'debit';
       l.resolution = { type: 'debit_credit', direction: direction, actor: actor, ts: ts, note: note, amount: amount, ref: ref, sev: sev };
     } else if (drawerAction === 'escalate') {
-      // Escalation is not a resolution — the line stays actionable and the
-      // escalation entry survives in the audit trail once it's resolved.
+      // Not a resolution — the line stays actionable (PRD 6.7).
       l.escalation = { actor: actor, ts: ts, note: note, to: 'Accounts Manager', sev: sev };
     }
 
