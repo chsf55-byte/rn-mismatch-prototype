@@ -369,6 +369,9 @@
   .tolerow label { font-size: 12.5px; }
   .tolerow .inputwrap { display: flex; align-items: center; gap: 4px; }
   .tolerow input { width: 54px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; text-align: right; background: var(--surface); color: var(--ink); }
+  .tol-error { display: none; color: var(--critical); font-size: 11.5px; margin: 0 0 8px; }
+  .tol-error.show { display: block; }
+  .tol-demo-note { font-size: 10.5px; color: var(--ink-faint); margin: 8px 0 0; }
 
   /* ---------- Notifications popover ---------- */
   .notif-pop { width: 300px; padding: 8px 0 4px; }
@@ -471,7 +474,9 @@
             <label>Medium if $ impact ≥</label>
             <div class="inputwrap"><span>$</span><input type="number" id="sevMedium" step="5" min="0"></div>
           </div>
+          <div class="tol-error" id="tolError"></div>
           <button class="btn btn-primary btn-sm" id="tolApply" style="width:100%; justify-content:center;">Apply</button>
+          <p class="tol-demo-note">Demo control — in production this is an admin setting, not part of the reviewer's dashboard.</p>
         </div>
       </div>
     </div>
@@ -1129,6 +1134,7 @@
     document.getElementById('tolPrice').value = state.tolerance.price;
     document.getElementById('sevCritical').value = state.severityThresholds.critical;
     document.getElementById('sevMedium').value = state.severityThresholds.medium;
+    document.getElementById('tolError').classList.remove('show');
     tolPop.classList.toggle('show');
   });
 
@@ -1151,18 +1157,39 @@
     if (!tolPop.contains(e.target) && e.target.id !== 'settingsBtn') tolPop.classList.remove('show');
     if (!notifPop.contains(e.target) && !e.target.closest('#bellBtn')) notifPop.classList.remove('show');
   });
-  document.getElementById('tolApply').addEventListener('click', function(){
+  function applyToleranceSettings(){
+    var err = document.getElementById('tolError');
     var q = parseFloat(document.getElementById('tolQty').value);
     var p = parseFloat(document.getElementById('tolPrice').value);
     var sc = parseFloat(document.getElementById('sevCritical').value);
     var sm = parseFloat(document.getElementById('sevMedium').value);
-    if (!isNaN(q)) state.tolerance.qty = q;
-    if (!isNaN(p)) state.tolerance.price = p;
-    if (!isNaN(sc)) state.severityThresholds.critical = sc;
-    if (!isNaN(sm)) state.severityThresholds.medium = sm;
+    // Blank/invalid fields keep their current value
+    if (isNaN(q)) q = state.tolerance.qty;
+    if (isNaN(p)) p = state.tolerance.price;
+    if (isNaN(sc)) sc = state.severityThresholds.critical;
+    if (isNaN(sm)) sm = state.severityThresholds.medium;
+    if (q < 0 || p < 0 || sc < 0 || sm < 0) {
+      err.textContent = 'Values can’t be negative.';
+      err.classList.add('show');
+      return;
+    }
+    if (sc <= sm) {
+      err.textContent = 'The Critical threshold must be higher than Medium.';
+      err.classList.add('show');
+      return;
+    }
+    err.classList.remove('show');
+    state.tolerance.qty = q;
+    state.tolerance.price = p;
+    state.severityThresholds.critical = sc;
+    state.severityThresholds.medium = sm;
     tolPop.classList.remove('show');
     render();
     showToast('Tolerance & severity updated');
+  }
+  document.getElementById('tolApply').addEventListener('click', applyToleranceSettings);
+  tolPop.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') applyToleranceSettings();
   });
 
   // ---------- Event delegation ----------

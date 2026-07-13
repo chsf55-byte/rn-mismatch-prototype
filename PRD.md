@@ -107,6 +107,8 @@ Every flagged line gets a severity tier — Small, Medium, or Critical — based
 
 Severity is derived from current thresholds while a line is open, and **snapshotted onto the record when the line is resolved or escalated**. Threshold changes re-tier only still-open lines; closed lines keep the tier they were decided under.
 
+Tolerance and severity configuration is an **admin setting, not part of the reviewer's day-to-day surface** — the prototype exposes it in the toolbar purely as a demo control. Inputs are validated: no negative values, and the Critical threshold must be higher than Medium (otherwise the Medium tier would be unreachable).
+
 ### 6.2 Notifications
 
 A queue nobody checks is the same failure mode as no queue:
